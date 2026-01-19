@@ -1,0 +1,979 @@
+<!-- index.html — Serious Game "Swipe Clinique" (1 fichier: HTML + CSS + JS)
+     Stack: Tailwind (CDN) + Vanilla JS + canvas-confetti (CDN)
+     Mécanique: Rejeter (⬅️) / Valider (➡️) + Timer + Jauge de satisfaction + Feedback + Fin avec score & mention
+-->
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Swipe Clinique — Paralysies flasques (Serious Game)</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          boxShadow: {
+            soft: "0 10px 30px rgba(0,0,0,.10)",
+            softer: "0 8px 20px rgba(0,0,0,.08)"
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Micro-animations & Swip-like motions (sans dépendances) */
+    :root { --card-tilt: 10deg; }
+
+    .glass {
+      background: rgba(255,255,255,.75);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,.55);
+    }
+
+    .tap {
+      transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+    }
+    .tap:active { transform: scale(.98); filter: brightness(.98); }
+
+    .card {
+      transform: translateY(6px) scale(.995);
+      opacity: 0;
+      animation: cardIn .35s ease forwards;
+      touch-action: none; /* pour drag swipe */
+      will-change: transform, opacity;
+    }
+    @keyframes cardIn {
+      to { transform: translateY(0) scale(1); opacity: 1; }
+    }
+
+    .cardExitLeft { animation: cardOutLeft .32s ease forwards; }
+    .cardExitRight { animation: cardOutRight .32s ease forwards; }
+    @keyframes cardOutLeft {
+      to { transform: translateX(-120%) rotate(calc(-1 * var(--card-tilt))) scale(.98); opacity: 0; }
+    }
+    @keyframes cardOutRight {
+      to { transform: translateX(120%) rotate(var(--card-tilt)) scale(.98); opacity: 0; }
+    }
+
+    .shake { animation: shake .22s ease; }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-6px); }
+      75% { transform: translateX(6px); }
+    }
+
+    .toastIn { animation: toastIn .22s ease forwards; }
+    @keyframes toastIn {
+      from { transform: translateY(10px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .swipeBadge {
+      position: absolute;
+      top: 18px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      opacity: 0;
+      transform: translateY(-6px);
+      transition: opacity .12s ease, transform .12s ease;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .card, .cardExitLeft, .cardExitRight, .shake, .toastIn { animation: none !important; }
+      .tap { transition: none !important; }
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-50 text-slate-900">
+  <div class="min-h-screen bg-gradient-to-br from-slate-50 via-slate-50 to-indigo-50">
+    <!-- Top bar -->
+    <header class="sticky top-0 z-50 border-b border-slate-200/70 bg-white/70 backdrop-blur">
+      <div class="mx-auto max-w-5xl px-4 py-3">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div class="flex items-center gap-3">
+            <div class="h-10 w-10 rounded-2xl bg-slate-900 text-white grid place-items-center shadow-soft">
+              🧠
+            </div>
+            <div>
+              <div class="text-sm font-semibold text-slate-900">Swipe Clinique</div>
+              <div class="text-xs text-slate-600">Autres paralysies flasques de l’enfant — Vrai/Faux</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 md:flex md:items-center md:gap-3">
+            <div class="rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-softer">
+              <div class="text-[11px] text-slate-500">Score</div>
+              <div class="text-sm font-bold"><span id="scoreText">0</span> / <span id="totalText">20</span></div>
+            </div>
+
+            <div class="rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-softer">
+              <div class="text-[11px] text-slate-500">Temps</div>
+              <div class="flex items-baseline gap-2">
+                <div class="text-sm font-bold"><span id="timerText">—</span>s</div>
+                <span id="timerPill" class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">⏱️</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Progress + Satisfaction -->
+        <div class="mt-3 grid gap-2 md:grid-cols-2">
+          <div class="rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-softer">
+            <div class="flex items-center justify-between text-[11px] text-slate-500">
+              <span>Progression</span>
+              <span id="progressText">0 / 20</span>
+            </div>
+            <div class="mt-2 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+              <div id="progressBar" class="h-full w-0 rounded-full bg-slate-900"></div>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-softer">
+            <div class="flex items-center justify-between text-[11px] text-slate-500">
+              <span>Jauge de satisfaction</span>
+              <span id="satisfactionText">60%</span>
+            </div>
+            <div class="mt-2 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+              <div id="satisfactionBar" class="h-full w-[60%] rounded-full bg-indigo-600"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main -->
+    <main class="mx-auto max-w-5xl px-4 py-8">
+      <!-- Start Modal -->
+      <section id="startScreen" class="mx-auto max-w-2xl">
+        <div class="glass rounded-3xl shadow-soft p-6 md:p-8">
+          <div class="flex items-start gap-4">
+            <div class="h-12 w-12 rounded-2xl bg-indigo-600 text-white grid place-items-center shadow-soft">🚀</div>
+            <div class="flex-1">
+              <h1 class="text-xl md:text-2xl font-extrabold tracking-tight">Serious Game — Swipe rapide (Corporate & fun)</h1>
+              <p class="mt-2 text-slate-700">
+                Objectif : <span class="font-semibold">identifier</span> les éléments clés (définitions, étiologies, signes) des paralysies flasques de l’enfant.
+              </p>
+
+              <div class="mt-4 grid gap-2 text-sm">
+                <div class="flex items-center gap-2"><span class="text-lg">⬅️</span> <span><span class="font-semibold">Rejeter</span> si la phrase est fausse</span></div>
+                <div class="flex items-center gap-2"><span class="text-lg">➡️</span> <span><span class="font-semibold">Valider</span> si la phrase est vraie</span></div>
+                <div class="flex items-center gap-2"><span class="text-lg">⏱️</span> <span>Un <span class="font-semibold">timer</span> par carte (réponse rapide)</span></div>
+                <div class="flex items-center gap-2"><span class="text-lg">📈</span> <span>Ta <span class="font-semibold">satisfaction</span> monte si tu réussis, baisse si tu te trompes</span></div>
+                <div class="flex items-center gap-2"><span class="text-lg">🖱️</span> <span>Tu peux aussi <span class="font-semibold">glisser</span> la carte (drag) comme un swipe</span></div>
+              </div>
+
+              <div class="mt-6 flex flex-col sm:flex-row gap-3">
+                <button id="startBtn"
+                        class="tap w-full sm:w-auto rounded-2xl bg-slate-900 px-5 py-3 text-white font-semibold shadow-soft hover:shadow-lg">
+                  Démarrer le jeu 🎮
+                </button>
+                <button id="howBtn"
+                        class="tap w-full sm:w-auto rounded-2xl border border-slate-200 bg-white px-5 py-3 font-semibold text-slate-900 shadow-softer hover:shadow-soft">
+                  Raccourcis ⌨️
+                </button>
+              </div>
+
+              <p class="mt-4 text-xs text-slate-500">
+                Astuce : touches clavier <span class="font-semibold">←</span> (rejeter) / <span class="font-semibold">→</span> (valider).
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Game Screen -->
+      <section id="gameScreen" class="hidden">
+        <div class="mx-auto max-w-2xl">
+          <!-- Card zone -->
+          <div class="relative">
+            <div id="card"
+                 class="card relative rounded-3xl border border-slate-200 bg-white shadow-soft p-6 md:p-8 overflow-hidden">
+              <!-- Swipe badges -->
+              <div id="badgeLeft" class="swipeBadge left-6 bg-rose-600 text-white shadow-soft">Rejeter ⬅️</div>
+              <div id="badgeRight" class="swipeBadge right-6 bg-emerald-600 text-white shadow-soft">Valider ➡️</div>
+
+              <!-- Card header -->
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div id="chip" class="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                    🧩 <span>Catégorie</span>
+                  </div>
+                  <div class="mt-3 text-xs text-slate-500">
+                    Carte <span id="cardIndex">1</span>/<span id="cardTotal">20</span>
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div class="text-xs text-slate-500">Consigne</div>
+                  <div class="text-sm font-semibold">Vrai ➡️ / Faux ⬅️</div>
+                </div>
+              </div>
+
+              <!-- Statement -->
+              <div class="mt-5">
+                <p id="statement" class="text-lg md:text-xl font-extrabold leading-snug tracking-tight text-slate-900">
+                  —
+                </p>
+                <p class="mt-3 text-sm text-slate-600">
+                  Choisis vite. Si tu te trompes, une correction courte apparaît.
+                </p>
+              </div>
+
+              <!-- Divider -->
+              <div class="my-6 h-px bg-slate-200/80"></div>
+
+              <!-- Footer -->
+              <div class="flex items-center justify-between text-xs text-slate-500">
+                <span>Drag possible ✋</span>
+                <span id="hintText">💡 Reste focus : une info clé par carte.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Controls -->
+          <div class="mt-5 grid grid-cols-2 gap-3">
+            <button id="leftBtn"
+                    class="tap rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-rose-700 font-bold shadow-softer hover:shadow-soft">
+              ⬅️ Rejeter
+              <div class="mt-1 text-xs font-semibold text-rose-600/80">(Faux)</div>
+            </button>
+
+            <button id="rightBtn"
+                    class="tap rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-emerald-700 font-bold shadow-softer hover:shadow-soft">
+              Valider ➡️
+              <div class="mt-1 text-xs font-semibold text-emerald-600/80">(Vrai)</div>
+            </button>
+          </div>
+
+          <!-- Feedback -->
+          <div id="feedback" class="mt-4 hidden">
+            <div id="feedbackBox" class="toastIn rounded-2xl border bg-white p-4 shadow-softer">
+              <div class="flex items-start gap-3">
+                <div id="feedbackIcon" class="h-10 w-10 rounded-2xl grid place-items-center text-white shadow-soft">✓</div>
+                <div class="flex-1">
+                  <div class="flex items-center justify-between gap-2">
+                    <div id="feedbackTitle" class="font-extrabold">—</div>
+                    <div class="text-xs text-slate-500">Feedback</div>
+                  </div>
+                  <p id="feedbackText" class="mt-1 text-sm text-slate-700">—</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- End Screen -->
+      <section id="endScreen" class="hidden mx-auto max-w-2xl">
+        <div class="glass rounded-3xl shadow-soft p-6 md:p-8">
+          <div class="flex items-start gap-4">
+            <div class="h-12 w-12 rounded-2xl bg-slate-900 text-white grid place-items-center shadow-soft">🏁</div>
+            <div class="flex-1">
+              <h2 class="text-xl md:text-2xl font-extrabold tracking-tight">Fin de partie</h2>
+              <p class="mt-2 text-slate-700">Voici ton résultat :</p>
+
+              <div class="mt-5 grid gap-3 sm:grid-cols-3">
+                <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-softer">
+                  <div class="text-[11px] text-slate-500">Score</div>
+                  <div class="mt-1 text-lg font-extrabold"><span id="finalScore">0</span>/<span id="finalTotal">20</span></div>
+                </div>
+
+                <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-softer">
+                  <div class="text-[11px] text-slate-500">Satisfaction</div>
+                  <div class="mt-1 text-lg font-extrabold"><span id="finalSatisfaction">0</span>%</div>
+                </div>
+
+                <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-softer">
+                  <div class="text-[11px] text-slate-500">Mention</div>
+                  <div class="mt-1 text-lg font-extrabold" id="finalMention">—</div>
+                </div>
+              </div>
+
+              <div class="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-softer">
+                <div class="text-sm font-bold">Conseil express 📝</div>
+                <p id="finalTip" class="mt-1 text-sm text-slate-700">—</p>
+              </div>
+
+              <div class="mt-6 flex flex-col sm:flex-row gap-3">
+                <button id="restartBtn"
+                        class="tap w-full sm:w-auto rounded-2xl bg-indigo-600 px-5 py-3 text-white font-semibold shadow-soft hover:shadow-lg">
+                  Rejouer 🔁
+                </button>
+                <button id="reviewBtn"
+                        class="tap w-full sm:w-auto rounded-2xl border border-slate-200 bg-white px-5 py-3 font-semibold text-slate-900 shadow-softer hover:shadow-soft">
+                  Voir les cartes ✅❌
+                </button>
+              </div>
+
+              <div id="reviewPanel" class="mt-5 hidden">
+                <div class="rounded-2xl border border-slate-200 bg-white shadow-softer overflow-hidden">
+                  <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                    <div class="font-bold text-sm">Récapitulatif</div>
+                    <button id="closeReviewBtn" class="tap text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200">
+                      Fermer
+                    </button>
+                  </div>
+                  <div id="reviewList" class="max-h-[320px] overflow-auto p-4 space-y-3"></div>
+                </div>
+              </div>
+
+              <p class="mt-4 text-xs text-slate-500">
+                Personnalisation : modifie le tableau <span class="font-semibold">QUESTIONS</span> dans le script (en bas du fichier).
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Confetti CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+
+  <script>
+    /***********************
+     * 1) DONNÉES (JSON)
+     ***********************/
+    const QUESTIONS = [
+      // Section I — PAA
+      {
+        id: 1,
+        category: "PAA (Poliomyélite antérieure aiguë)",
+        statement: "La poliomyélite antérieure aiguë (PAA) est une maladie infectieuse contagieuse endémo-épidémique.",
+        correct: true,
+        explanation: "La PAA est décrite comme une maladie infectieuse contagieuse endémo-épidémique."
+      },
+      {
+        id: 2,
+        category: "PAA (Prévention)",
+        statement: "Au Maroc, la PAA n’est pas concernée par le programme national de vaccination (PNI).",
+        correct: false,
+        explanation: "Le document mentionne l’éradication au Maroc via le PNI (vaccination DTCP)."
+      },
+      {
+        id: 3,
+        category: "PAA (Agent pathogène)",
+        statement: "La PAA est due à 3 types de poliovirus (1, 2 et 3).",
+        correct: true,
+        explanation: "Le document précise 3 types de poliovirus : 1, 2 et 3."
+      },
+      {
+        id: 4,
+        category: "PAA (Âge)",
+        statement: "La PAA touche surtout les enfants de plus de 10 ans.",
+        correct: false,
+        explanation: "La majorité des cas est rapportée chez l’enfant < 3 ans (70–90%)."
+      },
+      {
+        id: 5,
+        category: "PAA (Clinique)",
+        statement: "Dans la PAA, la paralysie flasque apparaît brutalement.",
+        correct: true,
+        explanation: "Le document indique une paralysie flasque d’apparition brutale."
+      },
+      {
+        id: 6,
+        category: "PAA (Topographie)",
+        statement: "La paralysie de la PAA est généralement symétrique et bien systématisée.",
+        correct: false,
+        explanation: "La topographie est décrite comme asymétrique et anarchique."
+      },
+      {
+        id: 7,
+        category: "PAA (Sensibilité)",
+        statement: "Dans la PAA, un déficit sensitif est typiquement présent.",
+        correct: false,
+        explanation: "Le document précise : déficit sensitif = 0."
+      },
+      {
+        id: 8,
+        category: "PAA (Trophisme)",
+        statement: "L’amyotrophie fait partie du tableau clinique de la PAA.",
+        correct: true,
+        explanation: "L’amyotrophie est listée parmi les éléments cliniques."
+      },
+
+      // Section II — Polyneuropathies secondaires
+      {
+        id: 9,
+        category: "Polyneuropathies secondaires",
+        statement: "Les polyneuropathies secondaires sont rares chez l’enfant.",
+        correct: true,
+        explanation: "Le document précise qu’elles sont rares chez l’enfant."
+      },
+      {
+        id: 10,
+        category: "Polyneuropathies (Métabolique)",
+        statement: "Le diabète peut être une cause métabolique de polyneuropathie secondaire.",
+        correct: true,
+        explanation: "Le diabète est cité parmi les causes métaboliques."
+      },
+      {
+        id: 11,
+        category: "Polyneuropathies (Causes)",
+        statement: "Les allergies alimentaires sont citées comme cause principale de polyneuropathies secondaires.",
+        correct: false,
+        explanation: "Le document cite des causes métaboliques, médicamenteuses, toxiques, carentielles et infectieuses."
+      },
+      {
+        id: 12,
+        category: "Polyneuropathies (Médicaments)",
+        statement: "Des médicaments comme l’INH ou les sels d’or peuvent provoquer des polyneuropathies secondaires.",
+        correct: true,
+        explanation: "INH et sels d’or sont mentionnés parmi les causes médicamenteuses."
+      },
+      {
+        id: 13,
+        category: "Polyneuropathies (Toxiques)",
+        statement: "Le plomb est cité parmi les toxiques pouvant être responsables.",
+        correct: true,
+        explanation: "Le plomb figure dans la liste des toxiques possibles."
+      },
+      {
+        id: 14,
+        category: "Polyneuropathies (Toxiques)",
+        statement: "Le mercure et l’arsenic ne sont pas cités parmi les toxiques possibles.",
+        correct: false,
+        explanation: "Le document cite plomb, mercure et arsenic parmi les toxiques."
+      },
+      {
+        id: 15,
+        category: "Polyneuropathies (Carences)",
+        statement: "Un déficit en vitamines B ou une malabsorption peuvent être en cause.",
+        correct: true,
+        explanation: "Déficit en vit B et malabsorption sont cités."
+      },
+      {
+        id: 16,
+        category: "Polyneuropathies (Infection)",
+        statement: "Le VIH est donné comme exemple d’infection pouvant être associée à une polyneuropathie secondaire.",
+        correct: true,
+        explanation: "Le document cite l’infection : ex. VIH."
+      },
+
+      // Section III — Myélopathies aiguës inflammatoires
+      {
+        id: 17,
+        category: "Myélopathies aiguës inflammatoires",
+        statement: "Les myélopathies aiguës inflammatoires correspondent à une atteinte aiguë de la moelle.",
+        correct: true,
+        explanation: "Le document indique une atteinte aiguë de la moelle."
+      },
+      {
+        id: 18,
+        category: "Myélopathies (Clinique)",
+        statement: "Les myélopathies aiguës inflammatoires ont toujours une présentation clinique uniforme.",
+        correct: false,
+        explanation: "Le document précise un polymorphisme clinique et évolutif."
+      },
+      {
+        id: 19,
+        category: "Myélopathies (Étiologies)",
+        statement: "Parmi les étiologies possibles : microbienne, virale, toxique ou médicamenteuse.",
+        correct: true,
+        explanation: "Ces étiologies sont listées dans le document."
+      },
+
+      // Section IV — Myélopathies compressives
+      {
+        id: 20,
+        category: "Myélopathies compressives",
+        statement: "Une myélopathie compressive peut être due à une tumeur, un abcès ou un neuroblastome, avec niveau sensitif et signes urinaires.",
+        correct: true,
+        explanation: "Le document cite ces étiologies et ces signes associés."
+      }
+    ];
+
+    /***********************
+     * 2) CONFIG
+     ***********************/
+    const CONFIG = {
+      timePerCardSec: 12,
+      satisfactionStart: 60,
+      satisfactionCorrect: +4,
+      satisfactionWrong: -6,
+      satisfactionTimeout: -7,
+      winScoreMin: 14,         // déclenche confettis
+      winSatisfactionMin: 60,  // déclenche confettis
+      swipeThresholdPx: 120    // distance drag pour valider un swipe
+    };
+
+    /***********************
+     * 3) ÉTAT
+     ***********************/
+    let idx = 0;
+    let score = 0;
+    let satisfaction = CONFIG.satisfactionStart;
+    let timeLeft = CONFIG.timePerCardSec;
+    let timerId = null;
+    let locked = false;
+    const history = []; // pour review
+
+    /***********************
+     * 4) DOM
+     ***********************/
+    const $ = (id) => document.getElementById(id);
+
+    const startScreen = $("startScreen");
+    const gameScreen = $("gameScreen");
+    const endScreen = $("endScreen");
+
+    const startBtn = $("startBtn");
+    const howBtn = $("howBtn");
+
+    const card = $("card");
+    const statementEl = $("statement");
+    const chipEl = $("chip");
+    const cardIndexEl = $("cardIndex");
+    const cardTotalEl = $("cardTotal");
+
+    const leftBtn = $("leftBtn");
+    const rightBtn = $("rightBtn");
+
+    const badgeLeft = $("badgeLeft");
+    const badgeRight = $("badgeRight");
+
+    const feedback = $("feedback");
+    const feedbackBox = $("feedbackBox");
+    const feedbackIcon = $("feedbackIcon");
+    const feedbackTitle = $("feedbackTitle");
+    const feedbackText = $("feedbackText");
+
+    const scoreText = $("scoreText");
+    const totalText = $("totalText");
+
+    const timerText = $("timerText");
+    const timerPill = $("timerPill");
+
+    const progressText = $("progressText");
+    const progressBar = $("progressBar");
+
+    const satisfactionText = $("satisfactionText");
+    const satisfactionBar = $("satisfactionBar");
+
+    const finalScore = $("finalScore");
+    const finalTotal = $("finalTotal");
+    const finalSatisfaction = $("finalSatisfaction");
+    const finalMention = $("finalMention");
+    const finalTip = $("finalTip");
+
+    const restartBtn = $("restartBtn");
+    const reviewBtn = $("reviewBtn");
+    const reviewPanel = $("reviewPanel");
+    const reviewList = $("reviewList");
+    const closeReviewBtn = $("closeReviewBtn");
+
+    /***********************
+     * 5) UTILITAIRES
+     ***********************/
+    function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+    function setVisible(el, show) {
+      el.classList.toggle("hidden", !show);
+    }
+
+    function resetBadges() {
+      badgeLeft.style.opacity = "0";
+      badgeLeft.style.transform = "translateY(-6px)";
+      badgeRight.style.opacity = "0";
+      badgeRight.style.transform = "translateY(-6px)";
+    }
+
+    function updateTopUI() {
+      scoreText.textContent = String(score);
+      totalText.textContent = String(QUESTIONS.length);
+
+      const current = Math.min(idx, QUESTIONS.length);
+      progressText.textContent = `${current} / ${QUESTIONS.length}`;
+      const pct = QUESTIONS.length ? (current / QUESTIONS.length) * 100 : 0;
+      progressBar.style.width = `${pct}%`;
+
+      satisfaction = clamp(satisfaction, 0, 100);
+      satisfactionText.textContent = `${satisfaction}%`;
+      satisfactionBar.style.width = `${satisfaction}%`;
+
+      cardTotalEl.textContent = String(QUESTIONS.length);
+      cardIndexEl.textContent = String(Math.min(idx + 1, QUESTIONS.length));
+    }
+
+    function setTimerPill() {
+      if (timeLeft <= 3) {
+        timerPill.textContent = "🔥";
+        timerPill.className = "text-[11px] font-semibold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700";
+      } else if (timeLeft <= 6) {
+        timerPill.textContent = "⚡";
+        timerPill.className = "text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800";
+      } else {
+        timerPill.textContent = "⏱️";
+        timerPill.className = "text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700";
+      }
+    }
+
+    function stopTimer() {
+      if (timerId) {
+        clearInterval(timerId);
+        timerId = null;
+      }
+    }
+
+    function startTimer() {
+      stopTimer();
+      timeLeft = CONFIG.timePerCardSec;
+      timerText.textContent = String(timeLeft);
+      setTimerPill();
+
+      timerId = setInterval(() => {
+        if (locked) return; // si on est en animation/feedback
+        timeLeft -= 1;
+        timeLeft = Math.max(0, timeLeft);
+        timerText.textContent = String(timeLeft);
+        setTimerPill();
+
+        if (timeLeft === 0) {
+          handleAnswer("timeout");
+        }
+      }, 1000);
+    }
+
+    function showFeedback(isCorrect, message, explanation) {
+      setVisible(feedback, true);
+
+      if (isCorrect) {
+        feedbackIcon.textContent = "✅";
+        feedbackIcon.className = "h-10 w-10 rounded-2xl grid place-items-center text-white shadow-soft bg-emerald-600";
+        feedbackTitle.textContent = message;
+        feedbackText.textContent = "Bien joué. On continue 👇";
+        feedbackBox.className = "toastIn rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-softer";
+      } else {
+        feedbackIcon.textContent = "🧩";
+        feedbackIcon.className = "h-10 w-10 rounded-2xl grid place-items-center text-white shadow-soft bg-rose-600";
+        feedbackTitle.textContent = message;
+        feedbackText.textContent = explanation || "Correction : relis l’idée clé et réessaie.";
+        feedbackBox.className = "toastIn rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-softer";
+      }
+    }
+
+    function hideFeedback() {
+      setVisible(feedback, false);
+    }
+
+    function mentionFromScore(s) {
+      if (s >= 18) return "Expert 🏆";
+      if (s >= 14) return "Confirmé ✅";
+      if (s >= 10) return "Intermédiaire 🙂";
+      return "Débutant 🌱";
+    }
+
+    function tipFromScore(s) {
+      if (s >= 18) return "Top ! Pour consolider, refais une passe en expliquant à voix haute chaque correction.";
+      if (s >= 14) return "Solide. Revois surtout les confusions : âge, topographie, et signes associés.";
+      if (s >= 10) return "Bon début. Reprends les catégories (PAA / polyneuropathies / myélopathies) et leurs mots-clés.";
+      return "Repars des bases : définitions + listes d’étiologies, puis rejoue pour automatiser.";
+    }
+
+    function safeConfetti() {
+      try {
+        if (typeof confetti === "function") {
+          const duration = 900;
+          const end = Date.now() + duration;
+          (function frame() {
+            confetti({ particleCount: 4, spread: 70, origin: { x: 0.2, y: 0.8 } });
+            confetti({ particleCount: 4, spread: 70, origin: { x: 0.8, y: 0.8 } });
+            if (Date.now() < end) requestAnimationFrame(frame);
+          })();
+        }
+      } catch (e) {
+        // pas de console error volontaire
+      }
+    }
+
+    /***********************
+     * 6) RENDER
+     ***********************/
+    function renderCard() {
+      const q = QUESTIONS[idx];
+      if (!q) return;
+
+      // reset visuals
+      card.classList.remove("cardExitLeft", "cardExitRight", "shake");
+      card.style.transform = "";
+      card.style.opacity = "";
+      resetBadges();
+      hideFeedback();
+
+      chipEl.innerHTML = `🧩 <span>${escapeHtml(q.category)}</span>`;
+      statementEl.textContent = q.statement;
+
+      updateTopUI();
+      startTimer();
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    /***********************
+     * 7) LOGIQUE DE RÉPONSE
+     ***********************/
+    function handleAnswer(direction) {
+      if (locked) return;
+      locked = true;
+      stopTimer();
+
+      const q = QUESTIONS[idx];
+      if (!q) return;
+
+      let chosen = direction; // "left" | "right" | "timeout"
+      let expected = q.correct ? "right" : "left";
+      let isCorrect = (chosen === expected);
+
+      if (chosen === "timeout") {
+        isCorrect = false;
+      }
+
+      // update score & satisfaction
+      if (isCorrect) {
+        score += 1;
+        satisfaction += CONFIG.satisfactionCorrect;
+      } else {
+        satisfaction += (chosen === "timeout") ? CONFIG.satisfactionTimeout : CONFIG.satisfactionWrong;
+      }
+      satisfaction = clamp(satisfaction, 0, 100);
+
+      // store history
+      history.push({
+        id: q.id,
+        category: q.category,
+        statement: q.statement,
+        expected,
+        chosen,
+        correct: isCorrect,
+        explanation: q.explanation
+      });
+
+      // feedback
+      if (chosen === "timeout") {
+        showFeedback(false, "Temps écoulé ⏳", q.explanation);
+        card.classList.add("shake");
+      } else if (isCorrect) {
+        showFeedback(true, "Correct ✅");
+      } else {
+        showFeedback(false, "Incorrect ❌", q.explanation);
+        card.classList.add("shake");
+      }
+
+      updateTopUI();
+
+      // animate card out then next
+      const outClass = (chosen === "right") ? "cardExitRight" : "cardExitLeft";
+      if (chosen !== "timeout") card.classList.add(outClass);
+
+      setTimeout(() => {
+        idx += 1;
+
+        if (idx >= QUESTIONS.length) {
+          endGame();
+        } else {
+          locked = false;
+          renderCard();
+        }
+      }, 650);
+    }
+
+    /***********************
+     * 8) FIN DE JEU
+     ***********************/
+    function endGame() {
+      stopTimer();
+      setVisible(gameScreen, false);
+      setVisible(endScreen, true);
+
+      finalScore.textContent = String(score);
+      finalTotal.textContent = String(QUESTIONS.length);
+      finalSatisfaction.textContent = String(satisfaction);
+      const mention = mentionFromScore(score);
+      finalMention.textContent = mention;
+      finalTip.textContent = tipFromScore(score);
+
+      // confettis si "gagne"
+      if (score >= CONFIG.winScoreMin && satisfaction >= CONFIG.winSatisfactionMin) {
+        safeConfetti();
+      }
+    }
+
+    function startGame() {
+      // reset state
+      idx = 0;
+      score = 0;
+      satisfaction = CONFIG.satisfactionStart;
+      timeLeft = CONFIG.timePerCardSec;
+      locked = false;
+      history.length = 0;
+
+      setVisible(startScreen, false);
+      setVisible(endScreen, false);
+      setVisible(gameScreen, true);
+
+      // init header counts
+      $("totalText").textContent = String(QUESTIONS.length);
+      $("cardTotal").textContent = String(QUESTIONS.length);
+
+      renderCard();
+    }
+
+    function restartGame() {
+      setVisible(reviewPanel, false);
+      startGame();
+    }
+
+    /***********************
+     * 9) DRAG SWIPE
+     ***********************/
+    let drag = { active: false, startX: 0, currentX: 0, pointerId: null };
+
+    function setBadgeFromDx(dx) {
+      const a = Math.min(1, Math.abs(dx) / 120);
+      if (dx < 0) {
+        badgeLeft.style.opacity = String(a);
+        badgeLeft.style.transform = "translateY(0)";
+        badgeRight.style.opacity = "0";
+        badgeRight.style.transform = "translateY(-6px)";
+      } else {
+        badgeRight.style.opacity = String(a);
+        badgeRight.style.transform = "translateY(0)";
+        badgeLeft.style.opacity = "0";
+        badgeLeft.style.transform = "translateY(-6px)";
+      }
+    }
+
+    function onPointerDown(e) {
+      if (locked) return;
+      drag.active = true;
+      drag.startX = e.clientX;
+      drag.currentX = e.clientX;
+      drag.pointerId = e.pointerId;
+      card.setPointerCapture(drag.pointerId);
+    }
+
+    function onPointerMove(e) {
+      if (!drag.active || locked) return;
+      drag.currentX = e.clientX;
+      const dx = drag.currentX - drag.startX;
+
+      const rot = clamp(dx / 22, -12, 12);
+      card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`;
+      setBadgeFromDx(dx);
+    }
+
+    function onPointerUp() {
+      if (!drag.active || locked) return;
+      drag.active = false;
+
+      const dx = drag.currentX - drag.startX;
+      resetBadges();
+
+      if (Math.abs(dx) >= CONFIG.swipeThresholdPx) {
+        handleAnswer(dx > 0 ? "right" : "left");
+      } else {
+        // snap back
+        card.style.transform = "";
+      }
+    }
+
+    /***********************
+     * 10) REVIEW PANEL
+     ***********************/
+    function renderReview() {
+      reviewList.innerHTML = "";
+      const frag = document.createDocumentFragment();
+
+      history.forEach(h => {
+        const row = document.createElement("div");
+        row.className = "rounded-2xl border border-slate-200 bg-white p-3 shadow-softer";
+
+        const status = h.correct ? "✅" : "❌";
+        const expectedTxt = (h.expected === "right") ? "Vrai ➡️" : "Faux ⬅️";
+        const chosenTxt = (h.chosen === "right") ? "Valider ➡️" : (h.chosen === "left") ? "Rejeter ⬅️" : "Temps ⏳";
+
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-2">
+            <div class="text-sm font-bold">${status} ${escapeHtml(h.category)}</div>
+            <div class="text-xs text-slate-500">Attendu: <span class="font-semibold">${expectedTxt}</span></div>
+          </div>
+          <div class="mt-2 text-sm text-slate-800">${escapeHtml(h.statement)}</div>
+          <div class="mt-2 text-xs text-slate-600">
+            Ton choix: <span class="font-semibold">${chosenTxt}</span>
+          </div>
+          ${h.correct ? "" : `<div class="mt-2 text-xs text-slate-700"><span class="font-bold">Correction :</span> ${escapeHtml(h.explanation || "")}</div>`}
+        `;
+        frag.appendChild(row);
+      });
+
+      reviewList.appendChild(frag);
+    }
+
+    /***********************
+     * 11) EVENTS
+     ***********************/
+    startBtn.addEventListener("click", startGame);
+
+    howBtn.addEventListener("click", () => {
+      alert("Raccourcis :\n- Flèche gauche (←) : Rejeter (Faux)\n- Flèche droite (→) : Valider (Vrai)\n\nTu peux aussi glisser la carte (drag) comme un swipe.");
+    });
+
+    leftBtn.addEventListener("click", () => handleAnswer("left"));
+    rightBtn.addEventListener("click", () => handleAnswer("right"));
+
+    restartBtn.addEventListener("click", restartGame);
+
+    reviewBtn.addEventListener("click", () => {
+      renderReview();
+      setVisible(reviewPanel, true);
+    });
+    closeReviewBtn.addEventListener("click", () => setVisible(reviewPanel, false));
+
+    // Keyboard controls
+    window.addEventListener("keydown", (e) => {
+      if (gameScreen.classList.contains("hidden")) return;
+      if (locked) return;
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        handleAnswer("left");
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        handleAnswer("right");
+      }
+    }, { passive: false });
+
+    // Pointer (drag swipe)
+    card.addEventListener("pointerdown", onPointerDown);
+    card.addEventListener("pointermove", onPointerMove);
+    card.addEventListener("pointerup", onPointerUp);
+    card.addEventListener("pointercancel", onPointerUp);
+    card.addEventListener("lostpointercapture", onPointerUp);
+
+    // Safety: set totals at load
+    (function init() {
+      $("totalText").textContent = String(QUESTIONS.length);
+      $("cardTotal").textContent = String(QUESTIONS.length);
+      updateTopUI();
+    })();
+  </script>
+</body>
+</html>
